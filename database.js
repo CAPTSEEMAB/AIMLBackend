@@ -1,11 +1,38 @@
 require('dotenv').config();
-const { createClient } = require('@supabase/supabase-js');
+const sql = require('mssql');
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY
-);
+// Azure SQL connection pool
+let pool = null;
 
-const getTableName = () => process.env.DB_TABLE_NAME;
+const config = {
+  server: process.env.AZURE_SQL_SERVER,
+  database: process.env.AZURE_SQL_DATABASE,
+  authentication: {
+    type: 'default',
+    options: {
+      userName: process.env.AZURE_SQL_USER,
+      password: process.env.AZURE_SQL_PASSWORD
+    }
+  },
+  options: {
+    encrypt: true,
+    trustServerCertificate: false,
+    enableKeepAlive: true,
+    connectionTimeout: 30000,
+    requestTimeout: 30000
+  }
+};
 
-module.exports = { supabase, getTableName };
+// Initialize connection pool
+const getPool = async () => {
+  if (!pool) {
+    pool = new sql.ConnectionPool(config);
+    await pool.connect();
+    console.log('✓ Azure SQL connected');
+  }
+  return pool;
+};
+
+const getTableName = () => process.env.AZURE_SQL_TABLE || 'products';
+
+module.exports = { sql, getPool, getTableName };

@@ -1,4 +1,4 @@
-const { supabase } = require('../database');
+const { sql, getPool, getTableName } = require('../database');
 const Logger = require('../utils/logger');
 
 class SchemaDiscoveryService {
@@ -19,29 +19,17 @@ class SchemaDiscoveryService {
 
       this.logger.info('Discovering database schema...');
 
-      let tableName = process.env.DB_TABLE_NAME;
-      
-      if (!tableName) {
-        this.logger.debug('DB_TABLE_NAME not set, querying available tables...');
-        tableName = await this.discoverAvailableTable();
-      }
+      let tableName = getTableName();
 
-      if (!tableName) {
-        throw new Error('No table name provided and unable to discover tables from database');
-      }
+      const pool = await getPool();
+      const query = `SELECT TOP 1 * FROM [${tableName}]`;
+      const result = await pool.request().query(query);
 
-      const { data, error } = await supabase
-        .from(tableName)
-        .select('*')
-        .limit(1);
-
-      if (error) throw new Error(error.message);
-
-      if (!data || data.length === 0) {
+      if (!result.recordset || result.recordset.length === 0) {
         throw new Error(`Table ${tableName} is empty or does not exist`);
       }
 
-      const firstRow = data[0];
+      const firstRow = result.recordset[0];
       const schema = this.buildSchemaFromRow(firstRow, tableName);
 
       this.schemaCache = schema;
@@ -152,16 +140,15 @@ class SchemaDiscoveryService {
     try {
       this.logger.debug('Fetching distinct values', { column: columnName });
 
-      const tableName = process.env.DB_TABLE_NAME ;
+      const tableName = getTableName();
+      const pool = await getPool();
       
-      const { data, error } = await supabase
-        .from(tableName)
-        .select(columnName)
-        .order(columnName);
+      const query = `SELECT DISTINCT [${columnName}] FROM [${tableName}] ORDER BY [${columnName}]`;
+      const result = await pool.request().query(query);
 
-      if (error) throw new Error(error.message);
-
-      const uniqueValues = [...new Set(data.map(row => row[columnName]).filter(v => v != null))];
+      const uniqueValues = result.recordset
+        .map(row => row[columnName])
+        .filter(v => v != null);
 
       this.logger.info(`Found ${uniqueValues.length} distinct values for ${columnName}`);
 
@@ -180,37 +167,31 @@ class SchemaDiscoveryService {
 
   async discoverAvailableTable() {
     try {
-      const { data, error } = await supabase
-        .from('information_schema.tables')
-        .select('table_name')
-        .eq('table_schema', 'public')
-        .eq('table_type', 'BASE TABLE')
-        .limit(1);
+      const pool = await getPool();
+      const query = `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE' ORDER BY TABLE_NAME`;
+      const result = await pool.request().query(query);
 
-      if (error) {
-        this.logger.warn('Unable to query information_schema, trying common table names');
-        const commonTables = ['products', 'data', 'records', 'items', 'orders'];
-        for (const table of commonTables) {
-          try {
-            const { data: testData, error: testError } = await supabase
-              .from(table)
-              .select('*')
-              .limit(1);
-            
-            if (!testError && testData !== null) {
-              this.logger.info(`Discovered table: ${table}`);
-              return table;
-            }
-          } catch (e) {
-          }
-        }
-        return null;
+      if (result.recordset && result.recordset.length > 0) {
+        const tableName = result.recordset[0].TABLE_NAME;
+        this.logger.info(`Discovered table from INFORMATION_SCHEMA: ${tableName}`);
+        return tableName;
       }
 
-      if (data && data.length > 0) {
-        const tableName = data[0].table_name;
-        this.logger.info(`Discovered table from information_schema: ${tableName}`);
-        return tableName;
+      this.logger.warn('Unable to query INFORMATION_SCHEMA, trying common table names');
+      const commonTables = ['products', 'data', 'records', 'items', 'orders'];
+      
+      for (const table of commonTables) {
+        try {
+          const testQuery = `SELECT TOP 1 * FROM [${table}]`;
+          const testResult = await pool.request().query(testQuery);
+          
+          if (testResult.recordset && testResult.recordset.length > 0) {
+            this.logger.info(`Discovered table: ${table}`);
+            return table;
+          }
+        } catch (e) {
+          // Continue to next table
+        }
       }
 
       return null;
