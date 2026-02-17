@@ -1,5 +1,5 @@
 const Constants = require('./config/constants');
-const { supabase, getTableName } = require('./database');
+const { getPool, getTableName } = require('./database');
 const GroqService = require('./services/groq-service');
 const { SQLParser } = require('./services/sql-parser');
 const QueryExecutor = require('./services/query-executor');
@@ -62,12 +62,14 @@ class NL2SQLProcessor {
     try {
       this.logger.debug('Building database schema information');
 
-      const tableName = this.dynamicConfig?.getConfig().database.tableName || process.env.DB_TABLE_NAME || 'products';
-      const { data: allData, error } = await supabase.from(tableName).select('*');
+      const tableName = this.dynamicConfig?.getConfig().database.tableName || process.env.DB_TABLE_NAME || 'Retail';
+      const pool = await getPool();
       
-      if (error) throw new Error(error.message);
+      // Fetch sample data from Azure SQL
+      const result = await pool.request().query(`SELECT TOP 100 * FROM [${tableName}]`);
+      const sampleData = result.recordset || [];
       
-      const sampleData = allData || [];
+      this.logger.debug('Sample data fetched', { rowCount: sampleData.length });
 
       const config = this.dynamicConfig?.getConfig();
       const categories = config ? Object.fromEntries(
@@ -90,19 +92,24 @@ class NL2SQLProcessor {
     try {
       this.logger.debug('Executing query', { query: sqlQuery.substring(0, 50) + '...' });
 
-      const tableName = this.dynamicConfig?.getConfig().database.tableName || process.env.DB_TABLE_NAME ;
-      const { data, error } = await supabase.from(tableName).select('*');
-      if (error) throw new Error(error.message);
+      const tableName = this.dynamicConfig?.getConfig().database.tableName || process.env.DB_TABLE_NAME || 'Retail';
+      const pool = await getPool();
+      
+      // Execute the generated SQL query
+      const result = await pool.request().query(sqlQuery);
+      let rows = result.recordset || [];
+      
+      this.logger.debug('Data fetched from Azure SQL', { rowCount: rows.length });
 
-      let result = data || [];
-      this.logger.debug('Data fetched from database', { rowCount: result.length });
-
+      // Parse the query for any post-processing needed
       const parsedQuery = this.sqlParser.parse(sqlQuery);
       this.logger.debug('Parsed query', { selectColumns: parsedQuery.selectColumns, groupColumns: parsedQuery.groupColumns });
-      result = await this.queryExecutor.execute(parsedQuery, result);
-      this.logger.debug('Query result', { rowCount: result.length, firstRow: result[0] });
+      
+      // Apply in-memory aggregates if needed (for complex operations)
+      rows = await this.queryExecutor.execute(parsedQuery, rows);
+      this.logger.debug('Query result', { rowCount: rows.length, firstRow: rows[0] });
 
-      return result;
+      return rows;
     } catch (error) {
       this.logger.error('Query execution failed', error);
       throw new Error(`Query execution error: ${error.message}`);
