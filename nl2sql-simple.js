@@ -8,6 +8,7 @@ const Logger = require('./utils/logger');
 const PromptBuilder = require('./utils/prompt-builder');
 const SchemaDiscoveryService = require('./services/schema-discovery');
 const DynamicConfigService = require('./services/dynamic-config');
+const SQLConverter = require('./services/sql-converter');
 
 class NL2SQLProcessor {
   constructor(dynamicConfig = null) {
@@ -94,15 +95,16 @@ class NL2SQLProcessor {
 
       const pool = await getPool();
       
+      const tsqlQuery = SQLConverter.convertToTSQL(sqlQuery);
+      this.logger.debug('Converted to T-SQL', { original: sqlQuery.substring(0, 50), converted: tsqlQuery.substring(0, 50) });
+      
       // Execute the generated SQL query
-      const result = await pool.request().query(sqlQuery);
+      const result = await pool.request().query(tsqlQuery);
       let rows = result.recordset || [];
       
       this.logger.debug('Data fetched from Azure SQL', { rowCount: rows.length });
       this.logger.debug('Query result', { rowCount: rows.length, firstRow: rows[0] });
 
-      // Return results directly from Azure SQL without re-processing
-      // (Azure SQL already executed GROUP BY, aggregates, ORDER BY, etc.)
       return rows;
     } catch (error) {
       this.logger.error('Query execution failed', error);
