@@ -6,7 +6,7 @@ class SchemaDiscoveryService {
     this.logger = logger || new Logger('SchemaDiscovery');
     this.schema = null;
     this.schemaCache = null;
-    this.cacheExpiry = 5 * 60 * 1000; // 5 minutes
+    this.cacheExpiry = 5 * 60 * 1000;
     this.lastCacheTime = null;
   }
 
@@ -116,9 +116,9 @@ class SchemaDiscoveryService {
 
   isDateString(value) {
     const datePatterns = [
-      /^\d{4}-\d{2}-\d{2}/, // YYYY-MM-DD
-      /^\d{2}\/\d{2}\/\d{4}/, // MM/DD/YYYY
-      /^\d{4}\/\d{2}\/\d{2}/, // YYYY/MM/DD
+      /^\d{4}-\d{2}-\d{2}/,
+      /^\d{2}\/\d{2}\/\d{4}/,
+      /^\d{4}\/\d{2}\/\d{2}/,
     ];
 
     return datePatterns.some(pattern => pattern.test(value));
@@ -190,7 +190,6 @@ class SchemaDiscoveryService {
             return table;
           }
         } catch (e) {
-          // Continue to next table
         }
       }
 

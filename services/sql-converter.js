@@ -5,6 +5,7 @@ class SQLConverter {
     let convertedQuery = query;
 
     convertedQuery = this.convertFunctionNames(convertedQuery);
+    convertedQuery = this.convertOperators(convertedQuery);
     convertedQuery = this.convertLimit(convertedQuery);
     convertedQuery = this.bracketIdentifiers(convertedQuery);
 
@@ -21,6 +22,25 @@ class SQLConverter {
     converted = converted.replace(/\bcurrent_schema\s*\(\s*\)/gi, "SCHEMA_NAME(SCHEMA_ID())");
     converted = converted.replace(/\bsession_user\s*(?=[,\s;)]|$)/gi, 'CURRENT_USER');
     converted = converted.replace(/\buser\s*(?=[,\s;)]|$)/gi, 'CURRENT_USER');
+
+    return converted;
+  }
+
+  static convertOperators(query) {
+    let converted = query;
+
+    converted = converted.replace(/\bILIKE\b/gi, 'LIKE');
+
+    converted = converted.replace(/\bNOT\s+ILIKE\b/gi, 'NOT LIKE');
+
+    converted = converted.replace(/(\]\s*|\'\s*|\w\s*)\|\|(\s*\[|\s*\'|\s*\w)/g, '$1+$2');
+
+    converted = converted.replace(/=\s*TRUE\b/gi, '= 1');
+    converted = converted.replace(/=\s*FALSE\b/gi, '= 0');
+    converted = converted.replace(/\bIS\s+TRUE\b/gi, '= 1');
+    converted = converted.replace(/\bIS\s+FALSE\b/gi, '= 0');
+
+    converted = converted.replace(/(\w+)::(\w+)/g, 'CAST($1 AS $2)');
 
     return converted;
   }

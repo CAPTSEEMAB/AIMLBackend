@@ -73,7 +73,7 @@ class DynamicConfigService {
     for (const col of schema.stringColumns) {
       const distinctCount = await this.getDistinctCount(col);
       
-      if (distinctCount < 100) { // Heuristic: fewer than 100 distinct values = category
+      if (distinctCount < 100) {
         categoryColumns.push(col);
       }
     }

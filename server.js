@@ -4,6 +4,9 @@ require('dotenv').config();
 
 const { processQuestion, initializeDynamicConfig } = require('./nl2sql-simple');
 const { AxisDetector } = require('./services/chart-detector');
+const SimpleSpecGenerator = require('./services/simple-spec-generator');
+const AISpecGenerator = require('./services/ai-spec-generator');
+const SpecValidator = require('./services/spec-validator');
 const Logger = require('./utils/logger');
 
 const app = express();
@@ -15,12 +18,20 @@ app.use(express.json());
 
 let dynamicConfig = null;
 let axisDetector = null;
+let aiSpecGenerator = null;
 
 async function initializeApp() {
   try {
     logger.info('Initializing application...');
     dynamicConfig = await initializeDynamicConfig();
     axisDetector = new AxisDetector(dynamicConfig, logger);
+    try {
+      aiSpecGenerator = new AISpecGenerator();
+      logger.info('AI Spec Generator initialized');
+    } catch (groqError) {
+      logger.warn('Failed to initialize AI Spec Generator', groqError.message);
+      logger.warn('Continuing without AI spec generation - fallback specs only');
+    }
     logger.info('Application initialized successfully');
   } catch (error) {
     logger.error('Failed to initialize application', error);
@@ -39,31 +50,173 @@ app.post('/api/query', async (req, res) => {
     logger.info(`Query received: ${question}`);
 
     const result = await processQuestion(question, dynamicConfig);
-    const { xAxis, yAxis } = axisDetector.detectAxes(result.data, result.chartType);
-    const { xAxis: xAxis2, yAxis: yAxis2 } = result.secondaryChartType 
-      ? axisDetector.detectAxes(result.data, result.secondaryChartType) 
-      : { xAxis: null, yAxis: null };
+    
+    if (result.success && result.data) {
+      try {
+        let spec;
+        if (aiSpecGenerator) {
+          spec = await aiSpecGenerator.generateSpec(
+            question,
+            result.data,
+            {
+              chartType: result.chartType,
+              xAxis: result.xAxis,
+              yAxis: result.yAxis,
+              query: result.query
+            }
+          );
+        } else {
+          logger.warn('AI Spec Generator not available, using fallback');
+          spec = {
+            root: 'data-card',
+            elements: {
+              'data-card': {
+                type: 'Card',
+                props: {
+                  title: 'Query Results',
+                  description: `Found ${result.data.length} records`,
+                },
+                children: [],
+              },
+            },
+            state: {
+              chartData: result.data,
+            },
+          };
+        }
 
-    res.json({
-      success: result.success,
-      question,
-      query: result.query,
-      data: result.data || [],
-      chartType: result.chartType || 'table',
-      xAxis,
-      yAxis,
-      secondaryChartType: result.secondaryChartType || null,
-      xAxis2,
-      yAxis2,
-      error: result.error,
-    });
+        const validation = SpecValidator.validate(spec);
+        const propValidation = SpecValidator.validatePropBindings(spec);
+
+        if (!validation.valid) {
+          logger.warn('Spec validation failed', {
+            question,
+            errors: validation.errors,
+          });
+
+          const errorSpec = {
+            root: 'error-card',
+            elements: {
+              'error-card': {
+                type: 'Card',
+                props: {
+                  title: 'Error',
+                  description: `Spec validation failed: ${validation.errors.join('; ')}`,
+                },
+                children: [],
+              },
+            },
+            state: {},
+          };
+
+          return res.json({
+            success: false,
+            question,
+            spec: errorSpec,
+            error: `Spec validation failed: ${validation.errors[0]}`,
+            data: [],
+            validation: SpecValidator.report(validation),
+          });
+        }
+
+        if (propValidation.length > 0) {
+          logger.warn('Prop binding validation failed', {
+            question,
+            errors: propValidation,
+          });
+        }
+
+        logger.info('Spec generated and validated successfully', {
+          question,
+          elementCount: Object.keys(spec.elements).length,
+        });
+
+        res.json({
+          success: true,
+          question,
+          spec: spec,
+          query: result.query,
+          data: result.data || [],
+          validation: SpecValidator.report(validation),
+        });
+      } catch (specError) {
+        logger.error('Failed to generate spec', specError);
+        const errorSpec = {
+          root: 'error-card',
+          elements: {
+            'error-card': {
+              type: 'Card',
+              props: {
+                title: 'Error',
+                description: `Failed to generate visualization: ${specError.message}`,
+              },
+              children: [],
+            },
+          },
+          state: {},
+        };
+
+        res.json({
+          success: false,
+          question,
+          spec: errorSpec,
+          error: specError.message,
+          data: result.data || [],
+        });
+      }
+    } else {
+      const errorSpec = {
+        root: 'error-card',
+        elements: {
+          'error-card': {
+            type: 'Card',
+            props: {
+              title: 'Error',
+              description: result.error || 'Failed to generate visualization',
+            },
+            children: [],
+          },
+        },
+        state: {},
+      };
+
+      const validation = SpecValidator.validate(errorSpec);
+
+      res.json({
+        success: false,
+        question,
+        spec: errorSpec,
+        error: result.error,
+        data: [],
+        validation: SpecValidator.report(validation),
+      });
+    }
   } catch (error) {
     logger.error('Query processing error', error);
+    const errorSpec = {
+      root: 'error-card',
+      elements: {
+        'error-card': {
+          type: 'Card',
+          props: {
+            title: 'Error',
+            description: error.message || 'Failed to process question',
+          },
+          children: [],
+        },
+      },
+      state: {},
+    };
+    
+    const validation = SpecValidator.validate(errorSpec);
+    
     res.status(500).json({
       success: false,
       question,
+      spec: errorSpec,
       error: error.message || 'Failed to process question',
       data: [],
+      validation: SpecValidator.report(validation),
     });
   }
 });

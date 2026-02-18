@@ -1,10 +1,8 @@
 require('dotenv').config();
 const sql = require('mssql');
 
-// Azure SQL connection pool
 let pool = null;
 
-// Try with access token first, fall back to username/password
 const getConfig = () => {
   if (process.env.AZURE_SQL_ACCESS_TOKEN) {
     return {
@@ -25,7 +23,6 @@ const getConfig = () => {
       }
     };
   } else {
-    // Fallback to username/password
     return {
       server: process.env.AZURE_SQL_SERVER,
       database: process.env.AZURE_SQL_DATABASE,
@@ -47,7 +44,6 @@ const getConfig = () => {
   }
 };
 
-// Initialize connection pool
 const getPool = async () => {
   if (!pool) {
     const config = getConfig();

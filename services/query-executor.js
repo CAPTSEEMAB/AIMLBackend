@@ -91,13 +91,11 @@ class QueryExecutor {
         const colLower = col.toLowerCase().trim();
         if (groupColumns.some(gc => gc === colLower)) return;
 
-        // Extract alias if present (e.g., "SUM(sales) AS total_sales" -> "total_sales")
         const asMatch = colLower.match(/\s+as\s+(\w+)$/);
         const alias = asMatch ? asMatch[1] : null;
 
         const aggregates = AggregateCalculator.calculateAggregates(rows, [col]);
         
-        // If there's an alias, map the aggregated value to the alias key
         if (alias && aggregates) {
           const keyName = Object.keys(aggregates)[0];
           if (keyName) {

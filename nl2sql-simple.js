@@ -66,7 +66,6 @@ class NL2SQLProcessor {
       const tableName = this.dynamicConfig?.getConfig().database.tableName || process.env.DB_TABLE_NAME || 'Retail';
       const pool = await getPool();
       
-      // Fetch sample data from Azure SQL
       const result = await pool.request().query(`SELECT TOP 100 * FROM [${tableName}]`);
       const sampleData = result.recordset || [];
       
@@ -98,10 +97,27 @@ class NL2SQLProcessor {
       const tsqlQuery = SQLConverter.convertToTSQL(sqlQuery);
       this.logger.debug('Converted to T-SQL', { original: sqlQuery.substring(0, 50), converted: tsqlQuery.substring(0, 50) });
       
-      // Execute the generated SQL query
       const result = await pool.request().query(tsqlQuery);
       let rows = result.recordset || [];
       
+      if (rows.length > 0) {
+        const keys = Object.keys(rows[0]);
+        const hasEmptyKey = keys.some(k => !k || !k.trim());
+        if (hasEmptyKey) {
+          const aliasMap = this.extractColumnAliases(sqlQuery, keys);
+          if (Object.keys(aliasMap).length > 0) {
+            rows = rows.map(row => {
+              const newRow = {};
+              for (const [oldKey, value] of Object.entries(row)) {
+                const newKey = aliasMap[oldKey] || oldKey || 'Value';
+                newRow[newKey] = value;
+              }
+              return newRow;
+            });
+          }
+        }
+      }
+
       this.logger.debug('Data fetched from Azure SQL', { rowCount: rows.length });
       this.logger.debug('Query result', { rowCount: rows.length, firstRow: rows[0] });
 
@@ -110,6 +126,50 @@ class NL2SQLProcessor {
       this.logger.error('Query execution failed', error);
       throw new Error(`Query execution error: ${error.message}`);
     }
+  }
+
+  extractColumnAliases(sqlQuery, currentKeys) {
+    const aliasMap = {};
+    const normalized = sqlQuery.replace(/\s+/g, ' ').trim();
+    
+    const selectMatch = normalized.match(/SELECT\s+(.+?)\s+FROM/i);
+    if (!selectMatch) return aliasMap;
+
+    const selectClause = selectMatch[1];
+    const parts = [];
+    let depth = 0, current = '';
+    for (const ch of selectClause) {
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      else if (ch === ',' && depth === 0) {
+        parts.push(current.trim());
+        current = '';
+        continue;
+      }
+      current += ch;
+    }
+    if (current.trim()) parts.push(current.trim());
+
+    let emptyIdx = 0;
+    for (const part of parts) {
+      if (/\sAS\s/i.test(part)) continue;
+      
+      const aggMatch = part.match(/^(SUM|COUNT|AVG|MIN|MAX|STDEV)\s*\(\s*([^)]+)\s*\)/i);
+      if (aggMatch) {
+        const func = aggMatch[1].toUpperCase();
+        const col = aggMatch[2].replace(/[\[\]]/g, '').trim();
+        const colName = col === '*' ? 'Count' : col;
+        const newName = `Total_${colName}`;
+        
+        const emptyKey = currentKeys.find((k, i) => (!k || !k.trim()) && i >= emptyIdx);
+        if (emptyKey !== undefined) {
+          aliasMap[emptyKey] = newName;
+          emptyIdx = currentKeys.indexOf(emptyKey) + 1;
+        }
+      }
+    }
+
+    return aliasMap;
   }
 }
 

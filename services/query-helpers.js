@@ -105,11 +105,9 @@ class AggregateCalculator {
   static calculateAggregates(rows, aggregates) {
     const result = {};
 
-    // Ensure aggregates is an array and contains only strings
     const aggArray = Array.isArray(aggregates) ? aggregates : [aggregates];
     
     aggArray.forEach(col => {
-      // Skip if not a string
       if (typeof col !== 'string') return;
       
       const colLower = col.toLowerCase().trim();
